@@ -59,7 +59,7 @@ internal class Program
 
             List<BeatSaberMap> maps = await BeatSaverMapInfo(hashes);
 
-            maps.Sort((x, y) => x.BeatSaverId.CompareTo(y.BeatSaverId));
+            maps.Sort(CompareMaps);
 
             BeatSaberPlaylist playlist = new()
             {
@@ -198,55 +198,67 @@ internal class Program
         string path = "/maps/hash/";
         foreach (var bucket in buckets)
         {
-            var response = await _httpClient.GetAsync(host + path + string.Join(",", bucket));
+            var response   = await _httpClient.GetAsync(host + path + string.Join(",", bucket));
             response.EnsureSuccessStatusCode();
             string content = await response.Content.ReadAsStringAsync();
-            JObject jobj = JObject.Parse(content);
+            JObject jobj   = JObject.Parse(content);
 
             if (bucket.Count == 1)
             {
-                string beatSaverId  = jobj.SelectToken("id")?.Value<string>() ?? throw new Exception("Error parsing id from JObject " + jobj.ToString());
-                string hash         = bucket[0];
-                string name         = jobj.SelectToken("name")?.Value<string>() ?? throw new Exception("Error parsing name from JObject " + jobj.ToString());
+                string? error = jobj.SelectToken("error")?.Value<string>();
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    Console.WriteLine($"Skipping map with hash {bucket[0]}, error: {error}");
+                }
+
+                string beatSaverId = jobj.SelectToken("id")?.Value<string>() ?? throw new Exception("Error parsing id from JObject " + jobj.ToString());
+                string hash        = bucket[0];
+                string name        = jobj.SelectToken("name")?.Value<string>() ?? throw new Exception("Error parsing name from JObject " + jobj.ToString());
 
                 maps.Add(new()
                 {
                     BeatSaverId = beatSaverId,
-                    Hash = hash,
-                    Name = name,
+                    Hash        = hash,
+                    Name        = name,
                 });
             }
             else
             {
                 foreach (var (key, val) in jobj)
                 {
-                    string hash        = key;
-
-                    if (hash == "c967a5862a8602ebacebe44b6ac5c2422c3e90bb")
-                    {
-                        Console.WriteLine("test");
-                    }
 
                     if (val == null || !val.HasValues)
                     {
-                        Console.WriteLine($"Skipping map with hash {hash}, data not found on BeatSaver.");
+                        Console.WriteLine($"Skipping map with hash {key}, data not found on BeatSaver.");
                         continue;
                     }
 
+                    string hash        = key;
                     string beatSaverId = val?.SelectToken("id")?.Value<string>() ?? throw new Exception("Error parsing id from JObject " + val?.ToString());
                     string name        = val?.SelectToken("name")?.Value<string>() ?? throw new Exception("Error parsing name from JObject " + val?.ToString());
 
                     maps.Add(new()
                     {
                         BeatSaverId = beatSaverId,
-                        Hash = hash,
-                        Name = name,
+                        Hash        = hash,
+                        Name        = name,
                     });
                 }
             }
         }
 
         return maps;
+    }
+
+    private static int CompareMaps(BeatSaberMap mapA, BeatSaberMap mapB)
+    {
+        int lengthDiff = mapA.BeatSaverId.Length - mapB.BeatSaverId.Length;
+        if (lengthDiff != 0)
+        {
+            return lengthDiff;
+        }
+
+        return mapA.BeatSaverId.CompareTo(mapB.BeatSaverId);
     }
 
     private class BeatSaberMap
