@@ -59,6 +59,8 @@ internal class Program
 
             List<BeatSaberMap> maps = await BeatSaverMapInfo(hashes);
 
+            maps.Sort((x, y) => x.BeatSaverId.CompareTo(y.BeatSaverId));
+
             BeatSaberPlaylist playlist = new()
             {
                 PlaylistAuthor = "BeatSaberExportMaps",
@@ -189,7 +191,7 @@ internal class Program
 
         for (int i = 0; i < hashes.Count; i += max)
         {
-            buckets.Add(hashes.Take(max).ToList());
+            buckets.Add(hashes.Skip(i).Take(max).ToList());
         }
 
         string host = "https://api.beatsaver.com";
@@ -219,6 +221,18 @@ internal class Program
                 foreach (var (key, val) in jobj)
                 {
                     string hash        = key;
+
+                    if (hash == "c967a5862a8602ebacebe44b6ac5c2422c3e90bb")
+                    {
+                        Console.WriteLine("test");
+                    }
+
+                    if (val == null || !val.HasValues)
+                    {
+                        Console.WriteLine($"Skipping map with hash {hash}, data not found on BeatSaver.");
+                        continue;
+                    }
+
                     string beatSaverId = val?.SelectToken("id")?.Value<string>() ?? throw new Exception("Error parsing id from JObject " + val?.ToString());
                     string name        = val?.SelectToken("name")?.Value<string>() ?? throw new Exception("Error parsing name from JObject " + val?.ToString());
 
