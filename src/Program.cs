@@ -9,54 +9,45 @@ internal class Program
     {
         try
         {
-            Console.WriteLine("Enter Beat Saber path (contains 'Beat Saber.exe')");
-            string dirInput = Console.ReadLine() ?? throw new Exception("Invalid path");
-            if (!Directory.Exists(dirInput))
+            ExportMode mode = AskForMode();
+
+            string filePath;
+            if (mode == ExportMode.Favorites)
             {
-                throw new Exception($"Invalid path \"{dirInput}\"");
+                filePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "../LocalLow/Hyperbolic Magnetism/Beat Saber/PlayerData.dat");
+            }
+            else
+            {
+                Console.WriteLine("Enter Beat Saber path (contains 'Beat Saber.exe')");
+                string dirInput = Console.ReadLine() ?? throw new Exception("Invalid path");
+                if (!Directory.Exists(dirInput))
+                {
+                    throw new Exception($"Invalid path \"{dirInput}\"");
+                }
+
+                filePath = Path.Combine(dirInput, "UserData/votedSongs.json");
             }
 
-            string voteFile = Path.Combine(dirInput, "UserData/votedSongs.json");
-            if (!File.Exists(voteFile))
+            if (!File.Exists(filePath))
             {
-                throw new Exception("Unable to locate votedSongs.json");
+                throw new Exception("Unable to locate song file: " + filePath);
             }
 
-            List<string> hashes = new();
-
-            string content = File.ReadAllText(voteFile);
-            JObject jobj = JObject.Parse(content);
-
-            bool upvote = true;
-            Console.WriteLine("[U]pvote (default) or [d]ownvotes?");
-            string? upDownInput = Console.ReadLine();
-            if (upDownInput != null)
+            string fileContent = File.ReadAllText(filePath);
+            List<string> hashes;
+            switch (mode)
             {
-                if (upDownInput.Equals("u", StringComparison.OrdinalIgnoreCase))
-                {
-                    // do nothing
-                }
-                else if (upDownInput.Equals("d", StringComparison.OrdinalIgnoreCase))
-                {
-                    upvote = false;
-                }
-                else
-                {
-                    Console.WriteLine("Unrecognized option, defaulting to [u]pvote.");
-                }
-            }
-
-            string voteString = upvote ? "Upvote" : "Downvote";
-
-            foreach (var (key, val) in jobj)
-            {
-                string hash = key;
-                string vote = val?.SelectToken("voteType")?.Value<string>() ?? throw new Exception("Error getting vote type for map " + hash);
-
-                if (vote.Equals(voteString, StringComparison.OrdinalIgnoreCase))
-                {
-                    hashes.Add(hash);
-                }
+                case ExportMode.Favorites:
+                    hashes = HashesFromPlayerData(fileContent);
+                    break;
+                case ExportMode.Upvotes:
+                    hashes = HashesFromVote(fileContent);
+                    break;
+                case ExportMode.Downvotes:
+                    hashes = HashesFromVote(fileContent, false);
+                    break;
+                default:
+                    throw new Exception("Unknown export mode.");
             }
 
             if (hashes.Count < 1)
@@ -64,18 +55,24 @@ internal class Program
                 throw new Exception("No maps found.");
             }
 
+            Console.WriteLine("Processing " + hashes.Count + " maps... (this might take a while)");
+
             List<BeatSaberMap> maps = await BeatSaverMapInfo(hashes);
 
             BeatSaberPlaylist playlist = new()
             {
-                PlaylistAuthor = "BeatSaberExportVotes",
-                PlaylistDescription = $"Exported at {DateTime.UtcNow} UTC.",
-                PlaylistTitle = $"{voteString}s ({DateTime.UtcNow.ToString("yyyy-MM-dd")})",
+                PlaylistAuthor = "BeatSaberExportMaps",
+                PlaylistDescription = $"Exported at {DateTime.UtcNow}.",
+                PlaylistTitle = $"{mode} ({DateTime.UtcNow})",
                 Songs = maps,
             };
 
             string jsonSerialized = JsonConvert.SerializeObject(playlist, Formatting.None);
-            File.WriteAllText($"{voteString}s.bplist", jsonSerialized);
+            string fileName = $"{mode}_{DateTime.UtcNow.ToString("yyyy-MM-ddTHH-mm-ssZ")}.bplist";
+            File.WriteAllText(fileName, jsonSerialized);
+
+            Console.WriteLine("Done! Wrote to " + fileName);
+            ExitPrompt();
         }
         catch (Exception exc)
         {
@@ -90,6 +87,98 @@ internal class Program
         Console.WriteLine("Press any key to continue...");
         Console.ReadKey();
         Environment.Exit(0);
+    }
+
+    private static ExportMode AskForMode()
+    {
+        while (true)
+        {
+            Console.WriteLine("Choose [f]avorites, [u]pvotes, or [d]ownvotes.");
+            string? line = Console.ReadLine();
+            line = line?.ToLower();
+            switch (line)
+            {
+                case "favorites":
+                case "favorite":
+                case "f":
+                    return ExportMode.Favorites;
+                case "upvotes":
+                case "upvote":
+                case "u":
+                    return ExportMode.Upvotes;
+                case "downvotes":
+                case "downvote":
+                case "d":
+                    return ExportMode.Downvotes;
+                default:
+                    Console.WriteLine("Invalid mode.");
+                    break;
+            }
+        }
+    }
+
+    private static List<string> HashesFromPlayerData(string fileContent)
+    {
+        List<string> hashes = new();
+        JObject jobj = JObject.Parse(fileContent);
+        JArray players = jobj.SelectToken("localPlayers")?.Value<JArray>() ?? throw new Exception("Error parsing players from PlayerInfo.dat");
+        JObject player;
+        if (players.Count == 0)
+        {
+            throw new Exception("No players found in PlayerInfo.dat");
+        }
+        if (players.Count > 1)
+        {
+            Console.WriteLine("Choose player:");
+            for (int i = 0; i < players.Count; i++)
+            {
+                string name = players[i].SelectToken("playerName")?.Value<string>() ?? throw new Exception("Error parsing playerName from player data.");
+                string id = players[i].SelectToken("playerId")?.Value<string>() ?? throw new Exception("Error parsing playerId from player data.");
+                Console.WriteLine($"{i}. ID: {id}, Name: {name}");
+            }
+            string playerSelect = Console.ReadLine() ?? throw new Exception("Invalid selection for player.");
+            int targetPlayer = int.Parse(playerSelect);
+            player = (JObject)players[targetPlayer];
+        }
+        else
+        {
+            player = (JObject)players[0];
+        }
+
+        JArray favorites = player.SelectToken("favoritesLevelIds")?.Value<JArray>() ?? throw new Exception("Error reading favorites.");
+        string customPrefix = "custom_level_";
+        foreach (JValue val in favorites)
+        {
+            string favorite = val.ToString();
+            if (!favorite.StartsWith(customPrefix))
+            {
+                continue;
+            }
+
+            string hash = favorite.Substring(customPrefix.Length);
+            hashes.Add(hash);
+        }
+
+        return hashes;
+    }
+
+    private static List<string> HashesFromVote(string fileContent, bool upvotes = true)
+    {
+        List<string> hashes = new();
+        JObject jobj = JObject.Parse(fileContent);
+        string voteString = upvotes ? "Upvote" : "Downvote";
+        foreach (var (key, val) in jobj)
+        {
+            string hash = key;
+            string vote = val?.SelectToken("voteType")?.Value<string>() ?? throw new Exception("Error getting vote type for map " + hash);
+
+            if (vote.Equals(voteString, StringComparison.OrdinalIgnoreCase))
+            {
+                hashes.Add(hash);
+            }
+        }
+
+        return hashes;
     }
 
     private static async Task<List<BeatSaberMap>> BeatSaverMapInfo(List<string> hashes)
@@ -174,5 +263,12 @@ internal class Program
 
         [JsonProperty("songs")]
         public List<BeatSaberMap> Songs { get; set; } = new();
+    }
+
+    enum ExportMode
+    {
+        Favorites,
+        Upvotes,
+        Downvotes
     }
 }
